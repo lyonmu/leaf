@@ -1,0 +1,56 @@
+package config
+
+import (
+	"fmt"
+
+	"github.com/IBM/sarama"
+	"github.com/lyonmu/leaf/pkg/mq/kafka"
+)
+
+type KafkaSASLConfig struct {
+	Enable    bool   `name:"enable" env:"KAFKA_SASL_ENABLE" default:"false" help:"是否启用 kafka sasl 验证" mapstructure:"enable" json:"enable" yaml:"enable"`
+	Mechanism string `enum:"PLAIN,SCRAM-SHA-256,SCRAM-SHA-512" name:"mechanism" env:"KAFKA_SASL_MECHANISM" default:"PLAIN" help:"kafka sasl 认证机制 [可选PLAIN,SCRAM-SHA-256,SCRAM-SHA-512]" mapstructure:"mechanism" json:"mechanism" yaml:"mechanism"`
+	Username  string `name:"username" env:"KAFKA_SASL_USERNAME" default:"root" help:"kafka 用户名" mapstructure:"username" json:"username" yaml:"username"`
+	Password  string `name:"password" env:"KAFKA_SASL_PASSWORD" default:"root" help:"kafka 密码" mapstructure:"password" json:"password" yaml:"password"`
+}
+type KafkaConfig struct {
+	Brokers     []string        `name:"brokers" env:"KAFKA_BROKERS" default:"localhost:9092" help:"kafka broker 列表，逗号分隔" mapstructure:"brokers" json:"brokers" yaml:"brokers"`
+	SASL        KafkaSASLConfig `embed:"" prefix:"sasl." mapstructure:"sasl" json:"sasl" yaml:"sasl"`
+	Partitions  int             `name:"partitions" env:"KAFKA_PARTITIONS" default:"3" help:"默认分区数" mapstructure:"partitions" json:"partitions" yaml:"partitions"`
+	Replication int             `name:"replication" env:"KAFKA_REPLICATION" default:"2" help:"默认副本数" mapstructure:"replication" json:"replication" yaml:"replication"`
+}
+
+// Producer 创建 Kafka Producer，自动处理 SASL 认证
+func (c *KafkaConfig) Producer(topic string, keyCodec, valueCodec any, opts ...kafka.Option) (*kafka.Producer[string, []byte], error) {
+	// 构建基础选项
+	baseOpts := []kafka.Option{
+		kafka.WithAddrs(c.Brokers),
+	}
+
+	// 添加编码器配置
+	if keyCodec != nil {
+		baseOpts = append(baseOpts, kafka.WithKeyCodec(keyCodec))
+	}
+	if valueCodec != nil {
+		baseOpts = append(baseOpts, kafka.WithValueCodec(valueCodec))
+	}
+
+	// 合并用户传入的选项
+	allOpts := append(baseOpts, opts...)
+
+	// 如果启用 SASL，添加认证配置
+	if c.SASL.Enable {
+		switch c.SASL.Mechanism {
+		case "PLAIN":
+			allOpts = append(allOpts, kafka.WithSASLPlaintext(c.SASL.Username, c.SASL.Password))
+		case "SCRAM-SHA-256":
+			allOpts = append(allOpts, kafka.WithSASLScram(c.SASL.Username, c.SASL.Password, sarama.SASLTypeSCRAMSHA256))
+		case "SCRAM-SHA-512":
+			allOpts = append(allOpts, kafka.WithSASLScram(c.SASL.Username, c.SASL.Password, sarama.SASLTypeSCRAMSHA512))
+		default:
+			return nil, fmt.Errorf("unsupported SASL mechanism: %s", c.SASL.Mechanism)
+		}
+	}
+
+	return kafka.NewProducer[string, []byte](topic, allOpts...)
+}
