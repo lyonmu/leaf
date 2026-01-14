@@ -45,3 +45,8 @@ x-pack/dockerlogbeat/temproot.tar
 
 # Files generated with the bump version automations
 *.bck
+bin/
+docs/
+*_bpfeb.go
+*_bpfel.go
+AGENTS.md
